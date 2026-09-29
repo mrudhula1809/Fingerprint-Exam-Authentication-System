@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Fingerprint Enrollment</title>
+</head>
+
+<body>
+
+<h2>👆 Student Fingerprint Enrollment</h2>
+
+<p>Enter the Student ID and then register the Windows Hello fingerprint.</p>
+
+<label>Student ID:</label>
+<input type="text" id="studentId" placeholder="TEST001">
+
+<br><br>
+
+<button onclick="registerFingerprint()">
+    👆 Register Fingerprint
+</button>
+
+<p id="result">Ready...</p>
+
+<script>
+
+function bufferToBase64url(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+
+    return btoa(binary)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+}
+
+function base64urlToBuffer(base64url) {
+    const padding = "=".repeat((4 - base64url.length % 4) % 4);
+
+    const base64 = (base64url + padding)
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    return bytes.buffer;
+}
+
+
+async function registerFingerprint() {
+
+    const result = document.getElementById("result");
+
+    const studentId =
+        document.getElementById("studentId").value.trim();
+
+    if (!studentId) {
+        result.innerText =
+            "⚠️ Please enter Student ID.";
+        return;
+    }
+
+    try {
+
+        // -----------------------------------------
+        // Step 1: Ask Flask for registration options
+        // -----------------------------------------
+
+        result.innerText =
+            "⏳ Starting registration...";
+
+        const startResponse = await fetch(
+            "/register/start",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    student_id: studentId
+                })
+            }
+        );
+
+        const options = await startResponse.json();
+
+        if (!startResponse.ok) {
+            throw new Error(
+                options.error || "Registration could not start."
+            );
+        }
+
+
+        // -----------------------------------------
+        // Step 2: Convert server challenge/user ID
+        // -----------------------------------------
+
+        options.challenge =
+            base64urlToBuffer(options.challenge);
+
+        if (options.user && options.user.id) {
+            options.user.id =
+                base64urlToBuffer(options.user.id);
+        }
+
+
+        // -----------------------------------------
+        // Step 3: Windows Hello / fingerprint
+        // -----------------------------------------
+
+        result.innerText =
+            "👆 Use Windows Hello fingerprint...";
+
+        const credential =
+            await navigator.credentials.create({
+                publicKey: options
+            });
+
+
+        if (!credential) {
+            throw new Error(
+                "No credential was created."
+            );
+        }
+
+
+        // -----------------------------------------
+        // Step 4: Convert credential to JSON
+        // -----------------------------------------
+
+        const credentialData = {
+
+            id: credential.id,
+
+            rawId:
+                bufferToBase64url(
+                    credential.rawId
+                ),
+
+            type:
+                credential.type,
+
+            response: {
+
+                clientDataJSON:
+                    bufferToBase64url(
+                        credential.response.clientDataJSON
+                    ),
+
+                attestationObject:
+                    bufferToBase64url(
+                        credential.response.attestationObject
+                    )
+            }
+        };
+
+
+        // -----------------------------------------
+        // Step 5: Send credential to Flask
+        // -----------------------------------------
+
+        result.innerText =
+            "⏳ Verifying fingerprint...";
+
+        const finishResponse = await fetch(
+            "/register/finish",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify(
+                    credentialData
+                )
+            }
+        );
+
+
+        const finishResult =
+            await finishResponse.json();
+
+
+        if (!finishResponse.ok ||
+            !finishResult.verified) {
+
+            throw new Error(
+                finishResult.error ||
+                "Fingerprint verification failed."
+            );
+        }
+
+
+        // -----------------------------------------
+        // Step 6: Success
+        // -----------------------------------------
+
+        result.innerText =
+            "🎉 Fingerprint registered successfully!";
+
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+        result.innerText =
+            "❌ Error: " +
+            error.name +
+            " - " +
+            error.message;
+    }
+}
+
+</script>
+
+</body>
+</html>
